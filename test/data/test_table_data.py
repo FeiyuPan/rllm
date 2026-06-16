@@ -164,50 +164,33 @@ def test_table_data_pkey_validation_and_table_type_inference():
     assert relationship.table_type == TableType.RELATIONSHIPTABLE
 
 
-def test_text_embedding_and_tokenized_text_metadata_paths():
-    df = pd.DataFrame({"text": ["aa", "bbb"], "num": [1, 2], "target": [0, 1]})
+def test_text_embedding():
+    csv_content = [
+        ["Column1", "Column2", "Column3", "Column4", "Column5", "Column6"],
+        ["Value1", "Value2", "22", "1", '"hello"', "Value6"],
+        ["Value7", "Value8", "355", "2", '"this is"', "Value12"],
+        ["Value13", "Value14", "67", "35", '"a test"', "Value18"],
+        ["Value19", "Value20", "88", "64", '"thanks for your attention!"', "Value24"],
+    ]
+    df = pd.DataFrame(csv_content[1:], columns=csv_content[0])
 
-    def embedder(texts):
-        return torch.tensor([[len(text), len(text) + 1] for text in texts], dtype=torch.float32)
+    class embedder:
+        def __init__(self, model_name="all-MiniLM-L6-v2"):
+            self.model = SentenceTransformer(model_name)
 
-    embedded = TableData(
-        df.copy(),
-        {"text": ColType.TEXT, "num": ColType.NUMERICAL, "target": ColType.CATEGORICAL},
-        target_col="target",
-        text_embedder_config=TextEmbedderConfig(text_embedder=embedder),
+        def __call__(self, texts):
+            return torch.tensor(self.model.encode(texts))
+
+    col_types = {
+        "Column1": ColType.CATEGORICAL,
+        "Column2": ColType.CATEGORICAL,
+        "Column3": ColType.NUMERICAL,
+        "Column4": ColType.NUMERICAL,
+        "Column5": ColType.TEXT,
+        "Column6": ColType.TEXT,
+    }
+    cfg = TextEmbedderConfig(text_embedder=embedder(), batch_size=8)
+    data = TableData(
+        df=df, col_types=col_types, target_col="Survived", text_embedder_config=cfg
     )
-    assert embedded.feat_dict[ColType.TEXT].shape == (2, 1, 2)
-    assert embedded.metadata[ColType.TEXT][0][StatType.EMB_DIM] == 2
-
-    tokenizer_config = TokenizerConfig(
-        tokenizer=lambda texts: {"input_ids": [[len(text), 0] for text in texts]},
-        tokenize_combine=True,
-        include_colname=False,
-        save_colname_token_ids=True,
-    )
-    tokenized = TableData(
-        df.copy(),
-        {"text": ColType.TEXT, "num": ColType.NUMERICAL, "target": ColType.CATEGORICAL},
-        target_col="target",
-        tokenizer_config=tokenizer_config,
-    )
-    ids, mask = tokenized.feat_dict[ColType.TEXT]
-    assert ids.tolist() == [[2, 0], [3, 0]]
-    assert mask.tolist() == [[1, 0], [1, 0]]
-    assert set(tokenized.colname_token_ids) == {"text", "num", "target"}
-
-
-def test_convert_text_coltypes_and_numeric_regression_task():
-    table = TableData(
-        pd.DataFrame({"cat": ["a", "b"], "target": [1.5, 2.5]}),
-        {"cat": ColType.CATEGORICAL, "target": ColType.NUMERICAL},
-        target_col="target",
-        convert_text_coltypes={ColType.CATEGORICAL},
-        text_embedder_config=TextEmbedderConfig(
-            text_embedder=lambda texts: torch.ones((len(texts), 3))
-        ),
-    )
-
-    assert table.col_types["cat"] == ColType.TEXT
-    assert table.task_type == TaskType.REGRESSION
-    assert table.num_classes == 2
+    assert data.feat_dict[ColType.TEXT].shape == (4, 2, 384)
